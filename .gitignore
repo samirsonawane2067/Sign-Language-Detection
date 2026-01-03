@@ -37,11 +37,13 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data and models
+# Data and models (large files - excluded for faster sync)
 data/
 data_backup_/
+models/
 *.npy
 *.joblib
+build/
 
 # Build artifacts
 build/
