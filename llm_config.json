@@ -1,0 +1,6 @@
+{
+  "openai_api_key": "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",
+  "preferred_model": "openai",
+  "openai_model": "gpt-3.5-turbo",
+  "hf_model": "t5-small"
+}

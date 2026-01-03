@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Performance Metrics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+        }
+
+        .back-btn {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .back-btn:hover {
+            background: #764ba2;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .metric-status {
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            display: inline-block;
+            font-weight: bold;
+        }
+
+        .status-ok {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .metric-range {
+            font-size: 11px;
+            color: #666;
+            margin-top: 8px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .chart-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .gestures-section {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+
+        .gestures-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .gestures-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .gesture-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .gesture-name {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .gesture-accuracy {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .gesture-bar {
+            background: rgba(255, 255, 255, 0.3);
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .gesture-bar-fill {
+            background: #4ade80;
+            height: 100%;
+            border-radius: 3px;
+        }
+
+        .session-info {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .session-item {
+            border-left: 4px solid #667eea;
+            padding-left: 15px;
+        }
+
+        .session-label {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+        }
+
+        .session-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .refresh-btn {
+            padding: 10px 20px;
+            background: #4ade80;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+            margin-left: 10px;
+        }
+
+        .refresh-btn:hover {
+            background: #22c55e;
+        }
+
+        .refresh-btn.loading {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.ok {
+            background: #4ade80;
+        }
+
+        .status-indicator.warning {
+            background: #facc15;
+        }
+
+        .status-indicator.error {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-size: 16px;
+        }
+
+        @media (max-width: 768px) {
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 15px;
+                align-items: flex-start;
+            }
+
+            .header h1 {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Performance Metrics Dashboard</h1>
+            <div>
+                <button class="refresh-btn" id="refreshBtn">🔄 Refresh</button>
+                <button class="back-btn" onclick="goBack()">← Back</button>
+            </div>
+        </div>
+
+        <div class="metrics-grid" id="metricsGrid">
+            <!-- Metrics will be populated here -->
+        </div>
+
+        <div class="charts-grid" id="chartsGrid">
+            <div class="chart-container">
+                <div class="chart-title">FPS Trend</div>
+                <canvas id="fpsChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">Latency Trend</div>
+                <canvas id="latencyChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">Confidence Trend</div>
+                <canvas id="confidenceChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">Accuracy Trend</div>
+                <canvas id="accuracyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="gestures-section">
+            <div class="gestures-title">🎯 Gesture Performance</div>
+            <div class="gestures-grid" id="gesturesGrid">
+                <!-- Gestures will be populated here -->
+            </div>
+        </div>
+
+        <div class="session-info" id="sessionInfo">
+            <!-- Session info will be populated here -->
+        </div>
+    </div>
+
+    <script>
+        let metricsData = {
+            fps: [],
+            latency: [],
+            confidence: [],
+            accuracy: []
+        };
+
+        let currentMetrics = null;
+        let fpsChart, latencyChart, confidenceChart, accuracyChart;
+
+        // Initialize charts
+        function initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            };
+
+            const ctx1 = document.getElementById('fpsChart').getContext('2d');
+            fpsChart = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'FPS',
+                        data: [],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+
+            const ctx2 = document.getElementById('latencyChart').getContext('2d');
+            latencyChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Latency (ms)',
+                        data: [],
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+
+            const ctx3 = document.getElementById('confidenceChart').getContext('2d');
+            confidenceChart = new Chart(ctx3, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Confidence (%)',
+                        data: [],
+                        borderColor: '#8b5cf6',
+                        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+
+            const ctx4 = document.getElementById('accuracyChart').getContext('2d');
+            accuracyChart = new Chart(ctx4, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Accuracy (%)',
+                        data: [],
+                        borderColor: '#4ade80',
+                        backgroundColor: 'rgba(74, 222, 128, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+        }
+
+        // Get status class based on value
+        function getStatusClass(metric, value) {
+            const thresholds = {
+                fps: { ok: 28, warning: 20 },
+                latency: { ok: 33, warning: 50 },
+                confidence: { ok: 80, warning: 60 },
+                accuracy: { ok: 90, warning: 80 }
+            };
+
+            const threshold = thresholds[metric];
+            if (!threshold) return 'status-ok';
+
+            if (metric === 'latency') {
+                if (value <= threshold.ok) return 'status-ok';
+                if (value <= threshold.warning) return 'status-warning';
+                return 'status-error';
+            } else {
+                if (value >= threshold.ok) return 'status-ok';
+                if (value >= threshold.warning) return 'status-warning';
+                return 'status-error';
+            }
+        }
+
+        // Get status indicator class
+        function getStatusIndicator(metric, value) {
+            const statusClass = getStatusClass(metric, value);
+            if (statusClass === 'status-ok') return 'ok';
+            if (statusClass === 'status-warning') return 'warning';
+            return 'error';
+        }
+
+        // Render metrics
+        function renderMetrics(data) {
+            const metricsGrid = document.getElementById('metricsGrid');
+            metricsGrid.innerHTML = '';
+
+            const metrics = [
+                {
+                    label: 'FPS',
+                    value: data.fps.current.toFixed(1),
+                    unit: 'FPS',
+                    range: `${data.fps.min.toFixed(1)} - ${data.fps.max.toFixed(1)}`,
+                    target: data.fps.target,
+                    key: 'fps'
+                },
+                {
+                    label: 'Latency',
+                    value: data.latency_ms.current.toFixed(1),
+                    unit: 'ms',
+                    range: `${data.latency_ms.min.toFixed(1)} - ${data.latency_ms.max.toFixed(1)}`,
+                    target: data.latency_ms.target,
+                    key: 'latency'
+                },
+                {
+                    label: 'Confidence',
+                    value: (data.confidence.current * 100).toFixed(1),
+                    unit: '%',
+                    range: `${(data.confidence.min * 100).toFixed(1)} - ${(data.confidence.max * 100).toFixed(1)}`,
+                    target: data.confidence.target * 100,
+                    key: 'confidence'
+                },
+                {
+                    label: 'Accuracy',
+                    value: data.accuracy.overall.toFixed(1),
+                    unit: '%',
+                    range: `${data.accuracy.correct_predictions}/${data.accuracy.total_predictions}`,
+                    target: 90,
+                    key: 'accuracy'
+                }
+            ];
+
+            metrics.forEach(metric => {
+                const statusClass = getStatusClass(metric.key, parseFloat(metric.value));
+                const statusText = statusClass === 'status-ok' ? 'OK' : 
+                                 statusClass === 'status-warning' ? 'WARNING' : 'POOR';
+                
+                const card = document.createElement('div');
+                card.className = 'metric-card';
+                card.innerHTML = `
+                    <div class="metric-label">${metric.label}</div>
+                    <div class="metric-value">${metric.value}<span style="font-size: 16px; margin-left: 5px;">${metric.unit}</span></div>
+                    <div class="metric-status ${statusClass}">
+                        <span class="status-indicator ${getStatusIndicator(metric.key, parseFloat(metric.value))}"></span>
+                        ${statusText}
+                    </div>
+                    <div class="metric-range">Range: ${metric.range}</div>
+                    <div class="metric-range">Target: ${metric.target}</div>
+                `;
+                metricsGrid.appendChild(card);
+            });
+        }
+
+        // Render gestures
+        function renderGestures(data) {
+            const gesturesGrid = document.getElementById('gesturesGrid');
+            gesturesGrid.innerHTML = '';
+
+            if (!data.gesture_stats || Object.keys(data.gesture_stats).length === 0) {
+                gesturesGrid.innerHTML = '<div class="no-data">No gesture data available</div>';
+                return;
+            }
+
+            // Sort gestures by accuracy
+            const gestures = Object.entries(data.gesture_stats)
+                .map(([name, stats]) => ({
+                    name,
+                    accuracy: (stats.correct / stats.attempts * 100) || 0,
+                    attempts: stats.attempts,
+                    confidence: stats.confidences.length > 0 ? 
+                        stats.confidences.reduce((a, b) => a + b) / stats.confidences.length : 0
+                }))
+                .sort((a, b) => b.accuracy - a.accuracy);
+
+            gestures.forEach(gesture => {
+                const card = document.createElement('div');
+                card.className = 'gesture-card';
+                card.innerHTML = `
+                    <div class="gesture-name">${gesture.name}</div>
+                    <div class="gesture-accuracy">${gesture.accuracy.toFixed(1)}%</div>
+                    <div class="gesture-bar">
+                        <div class="gesture-bar-fill" style="width: ${gesture.accuracy}%"></div>
+                    </div>
+                    <div style="font-size: 11px; margin-top: 8px; opacity: 0.8;">
+                        Attempts: ${gesture.attempts} | Confidence: ${(gesture.confidence * 100).toFixed(1)}%
+                    </div>
+                `;
+                gesturesGrid.appendChild(card);
+            });
+        }
+
+        // Render session info
+        function renderSessionInfo(data) {
+            const sessionInfo = document.getElementById('sessionInfo');
+            sessionInfo.innerHTML = `
+                <div class="session-item">
+                    <div class="session-label">Duration</div>
+                    <div class="session-value">${data.session.duration_seconds.toFixed(1)}s</div>
+                </div>
+                <div class="session-item">
+                    <div class="session-label">Total Frames</div>
+                    <div class="session-value">${data.session.total_frames}</div>
+                </div>
+                <div class="session-item">
+                    <div class="session-label">Total Gestures</div>
+                    <div class="session-value">${data.session.total_gestures}</div>
+                </div>
+                <div class="session-item">
+                    <div class="session-label">Memory Usage</div>
+                    <div class="session-value">${data.resources.memory_mb.toFixed(1)} MB</div>
+                </div>
+                <div class="session-item">
+                    <div class="session-label">CPU Usage</div>
+                    <div class="session-value">${data.resources.cpu_percent.toFixed(1)}%</div>
+                </div>
+            `;
+        }
+
+        // Update charts
+        function updateCharts(data) {
+            const timestamp = new Date().toLocaleTimeString();
+
+            // Add data to arrays (keep last 20 points)
+            metricsData.fps.push(data.fps.current);
+            metricsData.latency.push(data.latency_ms.current);
+            metricsData.confidence.push(data.confidence.current * 100);
+            metricsData.accuracy.push(data.accuracy.overall);
+
+            if (metricsData.fps.length > 20) {
+                metricsData.fps.shift();
+                metricsData.latency.shift();
+                metricsData.confidence.shift();
+                metricsData.accuracy.shift();
+            }
+
+            // Update FPS chart
+            fpsChart.data.labels = Array.from({length: metricsData.fps.length}, (_, i) => i + 1);
+            fpsChart.data.datasets[0].data = metricsData.fps;
+            fpsChart.update();
+
+            // Update Latency chart
+            latencyChart.data.labels = Array.from({length: metricsData.latency.length}, (_, i) => i + 1);
+            latencyChart.data.datasets[0].data = metricsData.latency;
+            latencyChart.update();
+
+            // Update Confidence chart
+            confidenceChart.data.labels = Array.from({length: metricsData.confidence.length}, (_, i) => i + 1);
+            confidenceChart.data.datasets[0].data = metricsData.confidence;
+            confidenceChart.update();
+
+            // Update Accuracy chart
+            accuracyChart.data.labels = Array.from({length: metricsData.accuracy.length}, (_, i) => i + 1);
+            accuracyChart.data.datasets[0].data = metricsData.accuracy;
+            accuracyChart.update();
+        }
+
+        // Fetch metrics from server
+        async function fetchMetrics() {
+            try {
+                const response = await fetch('/api/metrics');
+                if (response.ok) {
+                    const data = await response.json();
+                    currentMetrics = data;
+                    renderMetrics(data);
+                    renderGestures(data);
+                    renderSessionInfo(data);
+                    updateCharts(data);
+                } else {
+                    console.error('Failed to fetch metrics');
+                }
+            } catch (error) {
+                console.error('Error fetching metrics:', error);
+            }
+        }
+
+        // Go back
+        function goBack() {
+            window.history.back();
+        }
+
+        // Refresh button
+        document.getElementById('refreshBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('refreshBtn');
+            btn.classList.add('loading');
+            await fetchMetrics();
+            btn.classList.remove('loading');
+        });
+
+        // Initialize
+        initCharts();
+        fetchMetrics();
+
+        // Auto-refresh every 2 seconds
+        setInterval(fetchMetrics, 2000);
+    </script>
+</body>
+</html>
