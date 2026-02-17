@@ -40,9 +40,9 @@ Thumbs.db
 # Data and models (large files - excluded for faster sync)
 data/
 data_backup_/
-models/
+# models/  # Commented out for Streamlit deployment
 *.npy
-*.joblib
+# *.joblib  # Commented out for Streamlit deployment
 build/
 
 # Build artifacts
