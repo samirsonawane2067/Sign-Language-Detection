@@ -6,6 +6,7 @@ Features:
 - Rule-based corrections for common sign language patterns
 - Google Natural Language API integration for advanced correction
 - OpenAI API integration for advanced correction
+- Spelling correction with misspelled word highlighting
 - Fallback to rule-based if APIs unavailable
 - Natural, fluent English output
 """
@@ -14,6 +15,14 @@ import re
 import os
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
+
+# Try to import spell checker
+try:
+    from spellchecker import SpellChecker
+    SPELLCHECKER_AVAILABLE = True
+except ImportError:
+    SPELLCHECKER_AVAILABLE = False
+    print("[Grammar Corrector] SpellChecker not installed. Install with: pip install spellchecker")
 
 # Try to import transformer models for advanced correction
 try:
@@ -59,10 +68,21 @@ class GrammarCorrector:
         self.use_transformer = use_transformer and TRANSFORMERS_AVAILABLE
         self.use_openai = use_openai and OPENAI_AVAILABLE
         self.use_google_nlp = use_google_nlp and GOOGLE_NLP_AVAILABLE
+        self.use_spellchecker = SPELLCHECKER_AVAILABLE
         
         self.transformer_model = None
         self.openai_client = None
         self.google_client = None
+        self.spell_checker = None
+        
+        # Initialize spell checker
+        if self.use_spellchecker:
+            try:
+                self.spell_checker = SpellChecker()
+                print("[Grammar Corrector] ✓ Spell checker initialized")
+            except Exception as e:
+                print(f"[Grammar Corrector] Could not initialize spell checker: {e}")
+                self.use_spellchecker = False
         
         # Initialize OpenAI client if enabled
         if self.use_openai:
@@ -684,21 +704,30 @@ Corrected:"""
         if not text or not text.strip():
             return text
         
-        # Apply rule-based corrections first
-        corrected = self._apply_rule_based_corrections(text)
+        # Apply spelling correction first and track corrections
+        corrected_text, spelling_corrections = self._correct_spelling(text)
+        
+        # Apply rule-based corrections
+        corrected = self._apply_rule_based_corrections(corrected_text)
         
         # Try API corrections in order of preference
         if self.use_openai:
             try:
                 corrected = self._apply_openai_correction(corrected)
-                return corrected  # Return OpenAI result if successful
+                # Add spelling corrections info if any were made
+                if spelling_corrections:
+                    corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
+                return corrected
             except Exception as e:
                 print(f"[Grammar Corrector] OpenAI API error: {e}")
         
         if self.use_google_nlp:
             try:
                 corrected = self._apply_google_nlp_correction(corrected)
-                return corrected  # Return Google NLP result if successful
+                # Add spelling corrections info if any were made
+                if spelling_corrections:
+                    corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
+                return corrected
             except Exception as e:
                 print(f"[Grammar Corrector] Google NLP API error: {e}")
         
@@ -706,12 +735,81 @@ Corrected:"""
         if self.transformer_model:
             try:
                 corrected = self._apply_transformer_correction(corrected)
+                # Add spelling corrections info if any were made
+                if spelling_corrections:
+                    corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
                 return corrected
             except Exception as e:
                 print(f"[Grammar Corrector] Transformer model error: {e}")
         
+        # Add spelling corrections info if any were made
+        if spelling_corrections:
+            corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
+        
         # Return rule-based result as final fallback
         return corrected
+    
+    def _correct_spelling(self, text: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """
+        Correct spelling mistakes in the text.
+        
+        Args:
+            text: Input text with potential spelling errors
+            
+        Returns:
+            Tuple of (corrected_text, list_of_corrections)
+            corrections list contains tuples of (incorrect_word, correct_word)
+        """
+        if not self.use_spellchecker or not self.spell_checker:
+            return text, []
+        
+        words = text.split()
+        corrected_words = []
+        corrections = []
+        
+        for word in words:
+            # Remove punctuation for checking
+            clean_word = re.sub(r'[^\w]', '', word.lower())
+            
+            if clean_word and clean_word not in self.spell_checker:
+                # Word is misspelled, get correction
+                candidates = self.spell_checker.candidates(clean_word)
+                if candidates:
+                    correct_word = list(candidates)[0]  # Get the best candidate
+                    corrected_word = word.replace(clean_word, correct_word, 1)
+                    corrected_words.append(corrected_word)
+                    corrections.append((clean_word, correct_word))
+                else:
+                    corrected_words.append(word)
+            else:
+                corrected_words.append(word)
+        
+        corrected_text = ' '.join(corrected_words)
+        return corrected_text, corrections
+    
+    def _add_spelling_correction_info(self, text: str, corrections: List[Tuple[str, str]]) -> str:
+        """
+        Add spelling correction information to the corrected text.
+        
+        Args:
+            text: The corrected text
+            corrections: List of (incorrect_word, correct_word) tuples
+            
+        Returns:
+            Text with spelling correction information
+        """
+        if not corrections:
+            return text
+        
+        # Create correction info
+        correction_info = " [Spelling corrected: "
+        correction_parts = []
+        for incorrect, correct in corrections:
+            correction_parts.append(f"'{incorrect}' → '{correct}'")
+        
+        correction_info += ", ".join(correction_parts) + "]"
+        
+        return text + correction_info
 
 
 # ============================================================================
