@@ -24,6 +24,17 @@ except ImportError:
     SPELLCHECKER_AVAILABLE = False
     print("[Grammar Corrector] SpellChecker not installed. Install with: pip install spellchecker")
 
+# Try to import textdistance for better spelling suggestions
+try:
+    import textdistance
+    TEXTDISTANCE_AVAILABLE = True
+except ImportError:
+    TEXTDISTANCE_AVAILABLE = False
+    print("[Grammar Corrector] textdistance not installed. Install with: pip install textdistance")
+
+# Try to import difflib for fallback spelling correction
+import difflib
+
 # Try to import transformer models for advanced correction
 try:
     from transformers import pipeline
@@ -69,17 +80,50 @@ class GrammarCorrector:
         self.use_openai = use_openai and OPENAI_AVAILABLE
         self.use_google_nlp = use_google_nlp and GOOGLE_NLP_AVAILABLE
         self.use_spellchecker = SPELLCHECKER_AVAILABLE
+        self.use_textdistance = TEXTDISTANCE_AVAILABLE
         
         self.transformer_model = None
         self.openai_client = None
         self.google_client = None
         self.spell_checker = None
         
+        # Custom dictionary for common words and sign language terms
+        self.custom_word_dict = {
+            # Common words
+            'want', 'want', 'school', 'school', 'love', 'love', 'family', 'family',
+            'please', 'please', 'learn', 'learn', 'thank', 'thank', 'you', 'you',
+            'hello', 'hello', 'goodbye', 'goodbye', 'yes', 'yes', 'no', 'no',
+            'help', 'help', 'need', 'need', 'water', 'water', 'food', 'food',
+            'home', 'home', 'school', 'school', 'work', 'work', 'play', 'play',
+            'eat', 'eat', 'drink', 'drink', 'sleep', 'sleep', 'walk', 'walk',
+            'run', 'run', 'jump', 'jump', 'read', 'read', 'write', 'write',
+            'listen', 'listen', 'speak', 'speak', 'see', 'see', 'hear', 'hear',
+            'think', 'think', 'know', 'know', 'understand', 'understand',
+            'today', 'today', 'tomorrow', 'tomorrow', 'yesterday', 'yesterday',
+            'now', 'now', 'later', 'later', 'soon', 'soon', 'never', 'never',
+            'always', 'always', 'sometimes', 'sometimes', 'often', 'often',
+            'very', 'very', 'really', 'really', 'quite', 'quite', 'too', 'too',
+            'happy', 'happy', 'sad', 'sad', 'angry', 'angry', 'excited', 'excited',
+            'good', 'good', 'bad', 'bad', 'nice', 'nice', 'great', 'great',
+            'beautiful', 'beautiful', 'handsome', 'handsome', 'smart', 'smart',
+            'intelligent', 'intelligent', 'kind', 'kind', 'friendly', 'friendly',
+            'teacher', 'teacher', 'student', 'student', 'friend', 'friend',
+            'mother', 'mother', 'father', 'father', 'sister', 'sister', 'brother', 'brother',
+            'apple', 'apple', 'banana', 'banana', 'orange', 'orange', 'grape', 'grape',
+            'book', 'book', 'pen', 'pen', 'paper', 'paper', 'computer', 'computer',
+            'phone', 'phone', 'car', 'car', 'bus', 'bus', 'train', 'train',
+            'house', 'house', 'room', 'room', 'door', 'door', 'window', 'window',
+            'table', 'table', 'chair', 'chair', 'bed', 'bed', 'kitchen', 'kitchen'
+        }
+        
         # Initialize spell checker
         if self.use_spellchecker:
             try:
                 self.spell_checker = SpellChecker()
-                print("[Grammar Corrector] ✓ Spell checker initialized")
+                # Add custom words to the spell checker
+                for word in self.custom_word_dict:
+                    self.spell_checker.word_frequency.load_words([word])
+                print("[Grammar Corrector] ✓ Advanced spell checker initialized with custom dictionary")
             except Exception as e:
                 print(f"[Grammar Corrector] Could not initialize spell checker: {e}")
                 self.use_spellchecker = False
@@ -751,7 +795,7 @@ Corrected:"""
     
     def _correct_spelling(self, text: str) -> Tuple[str, List[Tuple[str, str]]]:
         """
-        Correct spelling mistakes in the text.
+        Advanced spelling correction using multiple methods.
         
         Args:
             text: Input text with potential spelling errors
@@ -760,9 +804,28 @@ Corrected:"""
             Tuple of (corrected_text, list_of_corrections)
             corrections list contains tuples of (incorrect_word, correct_word)
         """
-        if not self.use_spellchecker or not self.spell_checker:
+        if not text.strip():
             return text, []
         
+        # Method 1: Try advanced spell checker with custom dictionary
+        if self.use_spellchecker:
+            corrected_text, corrections = self._correct_with_spellchecker(text)
+            if corrections:
+                return corrected_text, corrections
+        
+        # Method 2: Try textdistance for better similarity matching
+        if self.use_textdistance:
+            corrected_text, corrections = self._correct_with_textdistance(text)
+            if corrections:
+                return corrected_text, corrections
+        
+        # Method 3: Fallback to difflib pattern matching
+        corrected_text, corrections = self._correct_with_difflib(text)
+        
+        return corrected_text, corrections
+    
+    def _correct_with_spellchecker(self, text: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Correct spelling using the enhanced spell checker with custom dictionary."""
         words = text.split()
         corrected_words = []
         corrections = []
@@ -772,13 +835,14 @@ Corrected:"""
             clean_word = re.sub(r'[^\w]', '', word.lower())
             
             if clean_word and clean_word not in self.spell_checker:
-                # Word is misspelled, get correction
+                # Get candidates from spell checker
                 candidates = self.spell_checker.candidates(clean_word)
                 if candidates:
-                    correct_word = list(candidates)[0]  # Get the best candidate
-                    corrected_word = word.replace(clean_word, correct_word, 1)
+                    # Choose the best candidate based on frequency and similarity
+                    best_candidate = self._choose_best_candidate(clean_word, list(candidates))
+                    corrected_word = word.replace(clean_word, best_candidate, 1)
                     corrected_words.append(corrected_word)
-                    corrections.append((clean_word, correct_word))
+                    corrections.append((clean_word, best_candidate))
                 else:
                     corrected_words.append(word)
             else:
@@ -786,6 +850,148 @@ Corrected:"""
         
         corrected_text = ' '.join(corrected_words)
         return corrected_text, corrections
+    
+    def _correct_with_textdistance(self, text: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Correct spelling using textdistance similarity algorithms."""
+        words = text.split()
+        corrected_words = []
+        corrections = []
+        
+        # Create a list of known words (custom dict + common words)
+        known_words = list(self.custom_word_dict) + [
+            'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i',
+            'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
+            'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
+            'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their',
+            'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 'go',
+            'me', 'when', 'make', 'can', 'like', 'time', 'no', 'just', 'him', 'know',
+            'take', 'people', 'into', 'year', 'your', 'good', 'some', 'could', 'them',
+            'see', 'other', 'than', 'then', 'now', 'look', 'only', 'come', 'its', 'over',
+            'think', 'also', 'back', 'after', 'use', 'two', 'how', 'our', 'work',
+            'first', 'well', 'way', 'even', 'new', 'want', 'because', 'any', 'these',
+            'give', 'day', 'most', 'us', 'is', 'was', 'are', 'been', 'has', 'had',
+            'were', 'said', 'did', 'getting', 'made', 'find', 'where', 'much', 'too'
+        ]
+        
+        for word in words:
+            clean_word = re.sub(r'[^\w]', '', word.lower())
+            
+            if clean_word and clean_word not in known_words:
+                # Find best match using textdistance
+                best_match = None
+                best_score = 0.8  # Minimum similarity threshold
+                
+                for known_word in known_words:
+                    # Use Levenshtein distance for similarity
+                    similarity = textdistance.levenshtein.normalized_similarity(clean_word, known_word)
+                    if similarity > best_score:
+                        best_score = similarity
+                        best_match = known_word
+                
+                if best_match:
+                    corrected_word = word.replace(clean_word, best_match, 1)
+                    corrected_words.append(corrected_word)
+                    corrections.append((clean_word, best_match))
+                else:
+                    corrected_words.append(word)
+            else:
+                corrected_words.append(word)
+        
+        corrected_text = ' '.join(corrected_words)
+        return corrected_text, corrections
+    
+    def _correct_with_difflib(self, text: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Fallback spelling correction using difflib pattern matching."""
+        words = text.split()
+        corrected_words = []
+        corrections = []
+        
+        # Create word list for difflib
+        word_list = list(self.custom_word_dict) + [
+            'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i',
+            'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
+            'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
+            'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their'
+        ]
+        
+        for word in words:
+            clean_word = re.sub(r'[^\w]', '', word.lower())
+            
+            if clean_word and len(clean_word) > 2:  # Only check words longer than 2 chars
+                # Find close matches
+                close_matches = difflib.get_close_matches(clean_word, word_list, n=1, cutoff=0.7)
+                
+                if close_matches:
+                    best_match = close_matches[0]
+                    corrected_word = word.replace(clean_word, best_match, 1)
+                    corrected_words.append(corrected_word)
+                    corrections.append((clean_word, best_match))
+                else:
+                    corrected_words.append(word)
+            else:
+                corrected_words.append(word)
+        
+        corrected_text = ' '.join(corrected_words)
+        return corrected_text, corrections
+    
+    def _choose_best_candidate(self, misspelled: str, candidates: List[str]) -> str:
+        """Choose the best spelling correction candidate from multiple options."""
+        if not candidates:
+            return misspelled
+        
+        if len(candidates) == 1:
+            return candidates[0]
+        
+        # Score candidates based on multiple factors
+        best_candidate = candidates[0]
+        best_score = 0
+        
+        for candidate in candidates:
+            score = 0
+            
+            # Factor 1: Length similarity (prefer similar length)
+            length_diff = abs(len(misspelled) - len(candidate))
+            length_score = 1.0 - (length_diff / max(len(misspelled), len(candidate)))
+            score += length_score * 0.3
+            
+            # Factor 2: Character similarity
+            if self.use_textdistance:
+                char_similarity = textdistance.levenshtein.normalized_similarity(misspelled, candidate)
+                score += char_similarity * 0.5
+            else:
+                # Simple character overlap
+                common_chars = set(misspelled.lower()) & set(candidate.lower())
+                char_similarity = len(common_chars) / max(len(set(misspelled)), len(set(candidate)))
+                score += char_similarity * 0.5
+            
+            # Factor 3: Common spelling patterns
+            common_patterns = {
+                'wnat': 'want',
+                'skool': 'school',
+                'luv': 'love',
+                'famly': 'family',
+                'plese': 'please',
+                'lern': 'learn',
+                'hapy': 'happy',
+                'gud': 'good',
+                'teecher': 'teacher',
+                'shoop': 'shop',
+                'wether': 'weather',
+                'undrstand': 'understand'
+            }
+            
+            if misspelled.lower() in common_patterns and candidate == common_patterns[misspelled.lower()]:
+                score += 0.2
+            
+            # Factor 4: Frequency in custom dictionary
+            if candidate in self.custom_word_dict:
+                score += 0.1
+            
+            if score > best_score:
+                best_score = score
+                best_candidate = candidate
+        
+        return best_candidate
     
     def _add_spelling_correction_info(self, text: str, corrections: List[Tuple[str, str]]) -> str:
         """
