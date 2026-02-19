@@ -83,6 +83,7 @@ def test_spelling_correction():
     print("- Method 2: TextDistance similarity matching")
     print("- Method 3: Difflib pattern matching (fallback)")
     print("- Common sign language misspellings are prioritized")
+    print("- Only corrected words are shown (no original misspellings displayed)")
 
 if __name__ == "__main__":
     test_spelling_correction()

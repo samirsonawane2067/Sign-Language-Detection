@@ -1002,18 +1002,15 @@ Corrected:"""
             corrections: List of (incorrect_word, correct_word) tuples
             
         Returns:
-            Text with spelling correction information
+            Text with spelling correction information (only showing corrected words)
         """
         if not corrections:
             return text
         
-        # Create correction info
+        # Create correction info showing only corrected words
         correction_info = " [Spelling corrected: "
-        correction_parts = []
-        for incorrect, correct in corrections:
-            correction_parts.append(f"'{incorrect}' → '{correct}'")
-        
-        correction_info += ", ".join(correction_parts) + "]"
+        corrected_words = [correct for incorrect, correct in corrections]
+        correction_info += ", ".join(corrected_words) + "]"
         
         return text + correction_info
 
