@@ -66,11 +66,11 @@ def test_spelling_correction():
             corrected = correct_grammar(test_text, use_transformer=False)
             print(f"Corrected: '{corrected}'")
             
-            # Check if spelling correction was applied
-            if "[Spelling corrected:" in corrected:
-                print("✅ Spelling correction applied")
+            # Check if spelling was applied (text is different from original)
+            if corrected != test_text:
+                print("✅ Spelling correction applied (silent)")
             else:
-                print("ℹ️  No spelling correction needed or applied")
+                print("ℹ️  No spelling correction needed")
                 
         except Exception as e:
             print(f"❌ Error: {e}")
@@ -83,7 +83,8 @@ def test_spelling_correction():
     print("- Method 2: TextDistance similarity matching")
     print("- Method 3: Difflib pattern matching (fallback)")
     print("- Common sign language misspellings are prioritized")
-    print("- Only corrected words are shown (no original misspellings displayed)")
+    print("- Spelling corrections are applied silently (no notifications shown)")
+    print("- Users see only the final corrected text")
 
 if __name__ == "__main__":
     test_spelling_correction()

@@ -748,7 +748,7 @@ Corrected:"""
         if not text or not text.strip():
             return text
         
-        # Apply spelling correction first and track corrections
+        # Apply spelling correction first (silently)
         corrected_text, spelling_corrections = self._correct_spelling(text)
         
         # Apply rule-based corrections
@@ -758,20 +758,14 @@ Corrected:"""
         if self.use_openai:
             try:
                 corrected = self._apply_openai_correction(corrected)
-                # Add spelling corrections info if any were made
-                if spelling_corrections:
-                    corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
-                return corrected
+                return corrected  # Return OpenAI result if successful
             except Exception as e:
                 print(f"[Grammar Corrector] OpenAI API error: {e}")
         
         if self.use_google_nlp:
             try:
                 corrected = self._apply_google_nlp_correction(corrected)
-                # Add spelling corrections info if any were made
-                if spelling_corrections:
-                    corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
-                return corrected
+                return corrected  # Return Google NLP result if successful
             except Exception as e:
                 print(f"[Grammar Corrector] Google NLP API error: {e}")
         
@@ -779,18 +773,11 @@ Corrected:"""
         if self.transformer_model:
             try:
                 corrected = self._apply_transformer_correction(corrected)
-                # Add spelling corrections info if any were made
-                if spelling_corrections:
-                    corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
                 return corrected
             except Exception as e:
                 print(f"[Grammar Corrector] Transformer model error: {e}")
         
-        # Add spelling corrections info if any were made
-        if spelling_corrections:
-            corrected = self._add_spelling_correction_info(corrected, spelling_corrections)
-        
-        # Return rule-based result as final fallback
+        # Return rule-based result as final fallback (no spelling correction info)
         return corrected
     
     def _correct_spelling(self, text: str) -> Tuple[str, List[Tuple[str, str]]]:
