@@ -47,6 +47,9 @@ from performance_metrics import PerformanceMetrics
 # Import emotion detector
 from emotion_detector import EmotionDetector
 
+# Import multi-language support
+from multi_language_support import LanguageManager, MultiLanguageRecognizer
+
 try:
     import mediapipe as mp
 except ImportError:
@@ -75,6 +78,10 @@ except ImportError:
 from PIL import Image, ImageSequence
 import tempfile
 import os
+try:
+    import requests
+except ImportError:
+    requests = None
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -87,8 +94,10 @@ MODEL_PATH = MODEL_DIR / "sign_knn.joblib"
 
 WINDOW_TITLE = "Sign Language Recognition"
 PRED_SMOOTHING = 7
-MIN_CONFIDENCE = 0.6
-DEBOUNCE_FRAMES = 8
+MIN_CONFIDENCE = 0.15  # Further lowered to catch more predictions
+MIN_CONFIDENCE_ISL = 0.1  # ISL even more lenient
+
+DEBOUNCE_FRAMES = 3  # Reduced from 8 for faster responsiveness
 # Auto-send settings: send buffer automatically when number of non-space characters
 # reaches this threshold, or if any buffer entry is a multi-character label (e.g., 'run').
 DEFAULT_AUTO_SEND_THRESHOLD = None  # Disabled - no auto-send limit
@@ -146,7 +155,12 @@ class DataCollector:
         cv2.imshow(WINDOW_TITLE, splash)
         cv2.waitKey(1000)
         mp_hands = mp.solutions.hands
-        hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1)
+        hands = mp_hands.Hands(
+            static_image_mode=False, 
+            max_num_hands=1,
+            min_detection_confidence=0.3,  # Lowered from default 0.5
+            min_tracking_confidence=0.3    # Lowered from default 0.5
+        )
         extractor = HandFeatureExtractor()
 
         saved = 0
@@ -244,8 +258,7 @@ def text_to_sign_animation(text: str, frame: np.ndarray) -> np.ndarray:
                     gif_frame = cv2.resize(gif_frame, (int(w*scale), int(h*scale)))
                     fh, fw = gif_frame.shape[:2]
                     
-                    # Position GIF in top-left corner with margin
-                    margin_x, margin_y = 20, 20
+                    margin_x, margin_y = 20, 130
                     # Ensure GIF fits within frame bounds
                     max_y, max_x = frame.shape[:2]
                     if fh + margin_y > max_y:
@@ -281,7 +294,7 @@ def text_to_sign_animation(text: str, frame: np.ndarray) -> np.ndarray:
                     fh, fw = video_frame.shape[:2]
                     
                     # Position video in top-left corner with some margin
-                    margin_x, margin_y = 20, 20
+                    margin_x, margin_y = 20, 130  # Moved down from 20 to 60 for spoken sentence space
                     # Ensure video fits within frame bounds
                     max_y, max_x = frame.shape[:2]
                     if fh + margin_y > max_y:
@@ -346,19 +359,34 @@ class RealtimeRecognizer:
         except Exception as e:
             print(f"[EMOTION] Could not initialize emotion detector: {e}")
         
+        # Load the trained ISL model
+        self.isl_model = None
+        try:
+            self.isl_model = joblib.load('models/sign_knn_isl_dual_hands.joblib')
+            print("[ISL] ISL dual hands model loaded successfully")
+            print(f"[ISL] Classes available: {list(self.isl_model.classes_)}")
+        except Exception as e:
+            print(f"[ISL] ISL model not found or could not load: {e}")
+            self.isl_model = None
+        
         # Initialize WebSocket client for full-duplex mode
         self.sio = None
         if full_duplex and SOCKETIO_AVAILABLE:
             try:
                 import socketio as sio_module
-                self.sio = sio_module.Client()
+                self.sio = sio_module.Client(reconnection=True)
                 self.sio.on('connect', self._on_ws_connect)
                 self.sio.on('disconnect', self._on_ws_disconnect)
                 self.sio.on('speak', self._on_ws_speak)
                 self.sio.on('status', self._on_ws_status)
                 print("[WebSocket] Attempting to connect to ws://localhost:5000...")
                 # Connect to the WebSocket server (websocket_server.py) on port 5000
-                self.sio.connect('http://localhost:5000', transports=['websocket'])
+                try:
+                    # Prefer default transport negotiation (polling -> websocket)
+                    self.sio.connect('http://localhost:5000')
+                except Exception as e_primary:
+                    print(f"[WebSocket] Primary connect failed ({e_primary}); trying websocket-only fallback...")
+                    self.sio.connect('http://localhost:5000', transports=['websocket'])
                 # We'll register when the 'connect' event is received to ensure we're connected
                 self._sio_registered = False
             except Exception as e:
@@ -372,9 +400,34 @@ class RealtimeRecognizer:
             except Exception as e:
                 print(f"[PYGAME INIT WARNING] {e}")
 
-        payload = joblib.load(model_path)
-        self.model: KNeighborsClassifier = payload["model"]
-        self.labels: List[str] = payload["labels"]
+        # Initialize multi-language support (loads both ASL and ISL models)
+        self.language_manager = LanguageManager(ROOT)
+        self.ml_recognizer = MultiLanguageRecognizer(self.language_manager)
+        
+        # Fallback: load old model path if multi-language models not available
+        try:
+            self.model: Optional[KNeighborsClassifier] = None
+            self.labels: List[str] = []
+            
+            # Check if we have at least one language model loaded
+            if not self.ml_recognizer.models:
+                print("[WARNING] No multi-language models found, attempting fallback to legacy model...")
+                try:
+                    payload = joblib.load(model_path)
+                    self.model = payload["model"]
+                    self.labels = payload["labels"]
+                    print(f"[LEGACY] Loaded legacy model from {model_path}")
+                except Exception as e:
+                    print(f"[ERROR] Could not load legacy model: {e}")
+                    raise RuntimeError("No models available for recognition")
+            else:
+                print(f"[LANGUAGE] Multi-language recognizer initialized with models: {list(self.ml_recognizer.models.keys())}")
+                # Get labels from current language
+                model_info = self.ml_recognizer.get_model_info()
+                self.labels = model_info.get("labels", [])
+        except Exception as e:
+            print(f"[MODEL INIT ERROR] {e}")
+            raise
         
         # History storage
         self.history: List[dict] = []
@@ -382,6 +435,12 @@ class RealtimeRecognizer:
         
         # Initialize performance metrics
         self.metrics = PerformanceMetrics(window_size=30)
+
+        # Web dashboard metrics push (only used in full_duplex mode)
+        self._last_metrics_emit_time: float = 0.0
+        self._metrics_emit_interval_sec: float = 1.0
+        self._metrics_emit_error_logged: bool = False
+        self._metrics_emit_ok_logged: bool = False
         
         # Load English dictionary for word validation
         try:
@@ -408,6 +467,29 @@ class RealtimeRecognizer:
             set_global_metrics(self.metrics)
         except Exception as e:
             print(f"[WARNING] Could not set metrics in WebSocket server: {e}")
+
+    def _build_metrics_snapshot(self) -> dict:
+        """Build a JSON-serializable metrics snapshot for the web dashboard."""
+        summary = self.metrics.get_summary()
+
+        gesture_stats = {}
+        for gesture, stats in self.metrics.gesture_stats.items():
+            gesture_stats[gesture] = {
+                'attempts': stats.get('attempts', 0),
+                'correct': stats.get('correct', 0),
+                'accuracy': stats.get('accuracy', 0.0),
+                'confidences': stats.get('confidences', [])
+            }
+
+        return {
+            'fps': summary.get('fps', {'current': 0, 'min': 0, 'max': 0, 'target': 30}),
+            'latency_ms': summary.get('latency_ms', {'current': 0, 'min': 0, 'max': 0, 'target': 33}),
+            'confidence': summary.get('confidence', {'current': 0, 'min': 0, 'max': 0, 'target': 0.8}),
+            'accuracy': summary.get('accuracy', {'overall': 0, 'correct_predictions': 0, 'total_predictions': 0}),
+            'resources': summary.get('resources', {'memory_mb': 0, 'cpu_percent': 0}),
+            'session': summary.get('session', {'duration_seconds': 0, 'total_frames': 0, 'total_gestures': 0}),
+            'gesture_stats': gesture_stats
+        }
 
     def get_screen_size(self) -> Tuple[int, int]:
         """Get screen resolution using tkinter or fallback method."""
@@ -472,6 +554,12 @@ class RealtimeRecognizer:
         # Log the server status if available
         try:
             self.sio.emit('get_status', {})
+        except Exception:
+            pass
+        # Kickstart dashboard with an immediate snapshot
+        try:
+            if hasattr(self, '_build_metrics_snapshot'):
+                self.sio.emit('metrics_update', self._build_metrics_snapshot())
         except Exception:
             pass
 
@@ -640,8 +728,7 @@ class RealtimeRecognizer:
             img = np.zeros((img_height, img_width, 3), dtype=np.uint8)
             
             # Add title
-            cv2.putText(img, "HISTORY", (50, 40), cv2.FONT_HERSHEY_SIMPLEX, 
-                       1.2, (0, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(img, "HISTORY", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
             
             # Split message into lines and display
             lines = message.split('\n')
@@ -797,9 +884,7 @@ class RealtimeRecognizer:
         panel_w, panel_h = 450, 45
         
         # Draw glassmorphic background
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (40, 40, 40), -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        cv2.rectangle(frame, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (0, 0, 0), -1)
         cv2.rectangle(frame, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (0, 255, 255), 1)
 
         # Render suggestions as 'Hotkeys'
@@ -884,21 +969,85 @@ class RealtimeRecognizer:
         # Start processing timer
         self.metrics.start_processing()
         
-        pred_idx = self.model.predict([feats])[0]
-        if hasattr(self.model, "predict_proba"):
-            probs = self.model.predict_proba([feats])[0]
-            conf = float(np.max(probs))
-        else:
-            conf = 1.0
+        label = None
+        conf = 0.0
+        
+        # Use multi-language recognizer if available, fall back to legacy model
+        try:
+            if self.ml_recognizer and hasattr(self.ml_recognizer, 'models') and self.ml_recognizer.models:
+                label, conf = self.ml_recognizer.predict(feats)
+            elif self.model:
+                pred_idx = self.model.predict([feats])[0]
+                if hasattr(self.model, "predict_proba"):
+                    probs = self.model.predict_proba([feats])[0]
+                    conf = float(np.max(probs))
+                else:
+                    conf = 1.0
+                label = self.labels[pred_idx]
+            else:
+                raise RuntimeError("No model available for prediction")
+        except Exception as e:
+            print(f"[PREDICTION ERROR] {e}")
+            return None, 0.0
+        
+        # Try ISL dual hands model if available and feature size is 126
+        if self.isl_model and len(feats) == 126:
+            try:
+                isl_prediction = self.isl_model.predict([feats])[0]
+                isl_confidence = self.isl_model.predict_proba([feats]).max()
+                # Use ISL prediction if confidence is higher
+                if isl_confidence > conf:
+                    label = isl_prediction
+                    conf = isl_confidence
+            except Exception as e:
+                pass  # Silently fail if ISL prediction doesn't work
         
         # End processing timer
         self.metrics.end_processing()
         
         # Record prediction for metrics
-        label = self.labels[pred_idx]
-        self.metrics.record_prediction(label, conf, is_correct=True)
+        if label:
+            self.metrics.record_prediction(label, conf, is_correct=True)
         
         return label, conf
+
+    def _toggle_language(self) -> None:
+        """Toggle between ASL and ISL languages"""
+        try:
+            current_lang = self.language_manager.get_current_language()
+            available_langs = self.language_manager.SUPPORTED_LANGUAGES
+            
+            # Get next language in the list
+            current_idx = available_langs.index(current_lang)
+            next_lang = available_langs[(current_idx + 1) % len(available_langs)]
+            
+            self._switch_language(next_lang)
+        except Exception as e:
+            print(f"[LANGUAGE ERROR] Could not toggle language: {e}")
+
+    def _switch_language(self, language: str) -> None:
+        """Switch to a specific language (ASL or ISL)"""
+        try:
+            if language not in self.language_manager.SUPPORTED_LANGUAGES:
+                print(f"[LANGUAGE] Unsupported language: {language}")
+                return
+            
+            # Check if model is loaded for this language
+            if language not in self.ml_recognizer.models:
+                print(f"[LANGUAGE] No model found for {language}. Available models: {list(self.ml_recognizer.models.keys())}")
+                return
+            
+            # Switch language in the manager
+            self.language_manager.set_current_language(language)
+            
+            # Update labels from the new language's model
+            model_info = self.ml_recognizer.get_model_info(language)
+            self.labels = model_info.get("labels", [])
+            
+            print(f"[LANGUAGE] ✓ Switched to {language} | Available symbols: {', '.join(self.labels[:10])}...")
+            
+        except Exception as e:
+            print(f"[LANGUAGE ERROR] Could not switch to {language}: {e}")
 
     def _show_welcome_window(self) -> None:
         """Display a welcome window with image for 2 seconds before starting the camera"""
@@ -1059,8 +1208,15 @@ class RealtimeRecognizer:
             spoken_text = r.recognize_google(audio)
             print(f"[VOICE] Recognized: {spoken_text}")
 
-            cv2.putText(frame, f"Recognized: {spoken_text}", (20, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            scale = 1
+            thickness = 2
+            rec_text = f"Recognized: {spoken_text}"
+            (tw, th), bl = cv2.getTextSize(rec_text, font, scale, thickness)
+            x0, y0 = 15, 85
+            x1, y1 = x0 + tw + 20, y0 + th + 20
+            cv2.rectangle(frame, (x0, y0), (x1, y1), (0, 0, 0), -1)
+            cv2.putText(frame, rec_text, (x0 + 10, y0 + th + 5), font, scale, (255, 255, 0), thickness)
 
             frame = text_to_sign_animation(spoken_text, frame)
             return frame
@@ -1081,6 +1237,8 @@ class RealtimeRecognizer:
     def run(self) -> None:
         if mp is None:
             raise RuntimeError("mediapipe not installed. pip install mediapipe")
+
+        print("[START] Gesture recognition system starting...")
 
         # Mouse callback function for close button, speak button, history button, and performance button
         def mouse_callback(event, x, y, flags, param):
@@ -1203,10 +1361,28 @@ class RealtimeRecognizer:
 
         mp_hands = mp.solutions.hands
         mp_drawing = mp.solutions.drawing_utils
-        hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1)
+        hands = mp_hands.Hands(
+            static_image_mode=False, 
+            max_num_hands=1,
+            min_detection_confidence=0.3,  # Lowered from default 0.5
+            min_tracking_confidence=0.3    # Lowered from default 0.5
+        )
         extractor = HandFeatureExtractor()
 
+        # Load the trained ISL model
+        try:
+            isl_model = joblib.load('models/sign_knn_isl_dual_hands.joblib')
+            print("✅ ISL model loaded successfully")
+        except:
+            isl_model = None
+            print("⚠️ ISL model not found")
+
+        frame_count = 0
         while True:
+            frame_count += 1
+            if frame_count % 30 == 0:  # Print every 30 frames (approx 1 second at 30 FPS)
+                print(f"[LOOP] Frame {frame_count}, Buffer: {''.join(self.buffer)}, Stable: {self.stable_count}")
+            
             # Start frame timing
             self.metrics.start_frame()
             
@@ -1305,6 +1481,12 @@ class RealtimeRecognizer:
             pred_char = self.current_letter.upper() if self.current_letter else "--"
             cv2.putText(frame, pred_char, (w - 240, 105), cv2.FONT_HERSHEY_DUPLEX, 2.0, (255, 255, 255), 3)
 
+            # 1B. Language Indicator Panel (Top Right, below Gesture Recognition)
+            current_language = self.language_manager.get_current_language()
+            lang_color = (0, 255, 0) if current_language == "ASL" else (0, 165, 255) if current_language == "ISL" else (100, 100, 100)
+            self.draw_ui_panel(frame, w - 320, 160, 200, 50, f"LANGUAGE: {current_language}", lang_color)
+            cv2.putText(frame, "Press L to toggle | 1:ASL 2:ISL", (w - 315, 195), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+
             # 2. Live Accuracy Score Panel (Left Side)
             # Calculate live accuracy based on recent predictions with more realistic scoring
             recent_window = 10  # Last 10 predictions
@@ -1336,7 +1518,7 @@ class RealtimeRecognizer:
             # Calculate maximum width for message panel to avoid video overlap
             video_start_x = window_width - w - 50  # Video starts here
             max_panel_width = video_start_x - 40  # Leave 40px margin from video
-            panel_width = min(400, max_panel_width)  # Use smaller of 400 or calculated max
+            panel_width = min(650, max_panel_width)  # Use smaller of 550 or calculated max
             
             self.draw_ui_panel(frame, 20, 150, panel_width, 120, "CURRENT MESSAGE", (0, 200, 255))
             msg_str = "".join(self.buffer)
@@ -1441,14 +1623,9 @@ class RealtimeRecognizer:
 
             # 8. SPEAK BUTTON (Bottom Right Corner of Video Feed)
             # Position relative to video feed area (right side of window)
-            video_feed_x = window_width - w - 50  # Video feed X position
-            video_feed_y = 20  # Video feed Y position
-            
-            speak_button_x = video_feed_x + w - 50  # 50px from right edge of video feed
-            speak_button_y = video_feed_y + h - 70  # 80px from bottom of video feed (moved up from 50)
-            speak_button_size = 30  # Reduced from 35 to 30
-            
-            # Draw speak button background (green circle)
+            speak_button_x = w - 100  # Position near bottom right
+            speak_button_y = h - 80
+            speak_button_size = 25
             cv2.circle(frame, (speak_button_x, speak_button_y), speak_button_size, (0, 255, 0), -1)
             cv2.circle(frame, (speak_button_x, speak_button_y), speak_button_size, (255, 255, 255), 3)
             
@@ -1608,6 +1785,7 @@ class RealtimeRecognizer:
 
             # Process hand landmarks if any
             if res.multi_hand_landmarks:
+                print(f"[HAND DETECTED] Hands detected: {len(res.multi_hand_landmarks)}")
                 # Draw hand landmarks on frame (adjust for centered frame)
                 for hand_landmarks in res.multi_hand_landmarks:
                     mp_drawing.draw_landmarks(
@@ -1618,13 +1796,33 @@ class RealtimeRecognizer:
                         mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
                     )
                 
-                feats = extractor.from_mediapipe(res.multi_hand_landmarks[0])
-                pred_label, conf = self._predict_label(feats)
-                # store last confidence for UI
-                self.last_confidence = conf
-                if conf < MIN_CONFIDENCE:
+                pred_label = None
+                conf = 0.0
+                try:
+                    feats = extractor.from_mediapipe(res.multi_hand_landmarks[0])
+                    print(f"[FEATURES] Shape: {feats.shape}, Range: [{feats.min():.3f}, {feats.max():.3f}]")
+                    pred_label, conf = self._predict_label(feats)
+                    print(f"[PREDICTION] Label: {pred_label}, Conf: {conf:.3f}")
+                    # store last confidence for UI
+                    self.last_confidence = conf
+                except Exception as e:
+                    print(f"[ERROR] Feature extraction/prediction: {e}")
+                    import traceback
+                    traceback.print_exc()
                     pred_label = None
+                    conf = 0.0
+                
+                # Use language-specific confidence thresholds
+                current_lang = self.language_manager.get_current_language()
+                min_conf_threshold = MIN_CONFIDENCE_ISL if current_lang == "ISL" else MIN_CONFIDENCE
+                
+                if pred_label and conf < min_conf_threshold:
+                    print(f"[FILTERED] {pred_label} confidence {conf:.3f} below threshold {min_conf_threshold}")
+                    pred_label = None
+                elif pred_label:
+                    print(f"[ACCEPTED] {pred_label} (conf: {conf:.3f}, threshold: {min_conf_threshold})")
             else:
+                print(f"[NO HANDS] No hands detected")
                 pred_label = None
 
             if pred_label:
@@ -1722,6 +1920,56 @@ class RealtimeRecognizer:
             # End frame timing
             self.metrics.end_frame()
 
+            # Push live metrics to the dashboard
+            if self.full_duplex:
+                now_t = time.time()
+                if (now_t - self._last_metrics_emit_time) >= self._metrics_emit_interval_sec:
+                    snapshot = self._build_metrics_snapshot()
+                    if self.sio and getattr(self.sio, 'connected', False):
+                        try:
+                            self.sio.emit('metrics_update', snapshot)
+                            self._last_metrics_emit_time = now_t
+                            if not self._metrics_emit_ok_logged:
+                                print("[WebSocket] ✓ metrics_update emitting to server")
+                                self._metrics_emit_ok_logged = True
+                        except Exception as e:
+                            if not self._metrics_emit_error_logged:
+                                print(f"[WebSocket] ✗ metrics_update emit failed: {e}")
+                                self._metrics_emit_error_logged = True
+                    else:
+                        # HTTP fallback to ensure dashboard receives data
+                        if requests is not None:
+                            try:
+                                requests.post('http://localhost:5000/api/metrics_push', json=snapshot, timeout=0.5)
+                                self._last_metrics_emit_time = now_t
+                                if not self._metrics_emit_ok_logged:
+                                    print("[HTTP] ✓ metrics snapshot pushed")
+                                    self._metrics_emit_ok_logged = True
+                            except Exception as e:
+                                if not self._metrics_emit_error_logged:
+                                    print(f"[HTTP] ✗ metrics push failed: {e}")
+                                    self._metrics_emit_error_logged = True
+                        else:
+                            if not getattr(self, '_metrics_emit_error_logged', False):
+                                print("[HTTP] ✗ requests not installed - cannot push metrics fallback. pip install requests")
+                                self._metrics_emit_error_logged = True
+
+                        # Same-process fallback: update websocket_server globals directly (when server is in-thread)
+                        try:
+                            import websocket_server as _ws
+                            _ws.latest_metrics_snapshot = snapshot
+                            try:
+                                from datetime import datetime as _dt
+                                _ws.last_metrics_snapshot_time = _dt.now().isoformat()
+                            except Exception:
+                                pass
+                            if not self._metrics_emit_ok_logged:
+                                print("[Direct] ✓ metrics snapshot stored in websocket_server module")
+                                self._metrics_emit_ok_logged = True
+                        except Exception:
+                            # ignore if module not available
+                            pass
+
             # Add word suggestions
             suggestions = self.get_word_suggestions()
             self.draw_suggestion_hud(frame, suggestions)
@@ -1792,6 +2040,15 @@ class RealtimeRecognizer:
             elif key == ord("a") or key == ord("A"):
                 self._show_alphabet_signs()
                 self.last_committed = None
+            elif key == ord("l") or key == ord("L"):
+                # Toggle language (L key)
+                self._toggle_language()
+            elif key == ord("1"):
+                # Switch to ASL (1 key)
+                self._switch_language("ASL")
+            elif key == ord("2"):
+                # Switch to ISL (2 key)
+                self._switch_language("ISL")
 
             # Handle voice input button click
             if self.voice_input_requested:
